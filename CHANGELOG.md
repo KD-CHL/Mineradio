@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- 新增产品级 macOS 26 适配，支持 Apple Silicon arm64 与 Intel x64 `.app` / DMG 构建，同时保留 Windows NSIS 构建。
+- 新增 macOS 原生菜单、Command 快捷键、红黄绿窗口按钮、Dock 重开、菜单栏状态项、Media Session 媒体键和系统目录适配。
+- Windows GPU 参数、桌面快捷方式、PowerShell 全局鼠标监听和 WorkerW 壁纸能力均增加明确平台边界；macOS 无可靠等价物的壁纸模式会安全禁用。
+- 登录 Cookie 改用 Electron `safeStorage` 加密保存；macOS 由 Keychain 提供底层保护，并自动迁移旧明文 Cookie。
+- 更新器按平台与架构选择资产，macOS 只接受匹配的 DMG/Mac ZIP，支持从多架构 `latest-mac.yml` 选择正确文件；macOS 禁用会修改已签名应用 Bundle 的快速资源补丁。
+- 新增 1024×1024 Mac 图标源、ICNS、Hardened Runtime 权限、ad-hoc/Developer ID 分离构建脚本、DMG Applications 快捷方式和 SHA256 交付流程。
+
 ## v1.1.1
 
 - P0 installer safety fix: installation now defaults to the first available non-C drive from `D:\Mineradio` through `Z:\Mineradio`; it falls back to `C:\Mineradio` only when no D-Z drive exists.

@@ -1,5 +1,16 @@
 # 发布流程
 
+## macOS 发布边界
+
+- 本地测试默认执行 `npm run build:mac`，生成 arm64/x64 DMG；默认签名模式是 ad-hoc，未公证，不得描述为 Developer ID 正式签名。
+- 正式发布前必须使用 `MINERADIO_MAC_SIGNING=developer`、Developer ID Application 证书和 Apple 公证凭据重新构建。
+- 公证成功后必须完成 staple，并执行 `codesign --verify --deep --strict`、`spctl --assess --type execute`、`xcrun stapler validate` 和 `hdiutil verify`。
+- GitHub Release 的 macOS 资产使用 `Mineradio-<version>-mac-arm64.dmg` 与 `Mineradio-<version>-mac-x64.dmg`；可选 Universal 包不能代替两个架构的实际校验。
+- `latest-mac.yml` 必须与 DMG 同批生成；应用更新器会按当前 CPU 架构选取 `files` 中的资产。
+- 证书、Apple ID 专用密码和 API Key 只能来自环境变量或 Keychain，不得进入仓库或构建日志。
+
+完整命令与安装说明见 `docs/MACOS_INSTALL.md`。
+
 ## v1.1.0 发布边界
 
 - `v1.1.0` 是纯净安装发布版，从当前 `resources/app` 可信源码重新构建。

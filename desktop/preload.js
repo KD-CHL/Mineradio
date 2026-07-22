@@ -1,7 +1,20 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+const platform = process.platform;
+const arch = process.arch;
+const capabilities = {
+  nativeTrafficLights: platform === 'darwin',
+  desktopLyrics: true,
+  desktopLyricsGlobalMiddleClick: platform === 'win32',
+  wallpaperMode: platform === 'win32',
+  quickResourcePatches: platform === 'win32',
+};
+
 contextBridge.exposeInMainWorld('desktopWindow', {
   isDesktop: true,
+  platform,
+  arch,
+  capabilities,
   minimize: () => ipcRenderer.invoke('desktop-window-minimize'),
   toggleMaximize: () => ipcRenderer.invoke('desktop-window-toggle-maximize'),
   toggleFullscreen: () => ipcRenderer.invoke('desktop-window-toggle-fullscreen'),
@@ -13,6 +26,8 @@ contextBridge.exposeInMainWorld('desktopWindow', {
   openQQMusicLogin: () => ipcRenderer.invoke('qq-music-open-login'),
   clearQQMusicLogin: () => ipcRenderer.invoke('qq-music-clear-login'),
   openUpdateInstaller: (filePath) => ipcRenderer.invoke('mineradio-open-update-installer', filePath),
+  showUpdateInFolder: (filePath) => ipcRenderer.invoke('mineradio-show-update-in-folder', filePath),
+  showNotification: (payload) => ipcRenderer.invoke('mineradio-show-notification', payload || {}),
   restartApp: () => ipcRenderer.invoke('mineradio-restart-app'),
   configureGlobalHotkeys: (bindings) => ipcRenderer.invoke('mineradio-hotkeys-configure-global', bindings || []),
   exportJsonFile: (payload) => ipcRenderer.invoke('mineradio-export-json-file', payload || {}),
@@ -22,6 +37,12 @@ contextBridge.exposeInMainWorld('desktopWindow', {
     const listener = (_event, payload) => callback(payload || {});
     ipcRenderer.on('mineradio-global-hotkey', listener);
     return () => ipcRenderer.removeListener('mineradio-global-hotkey', listener);
+  },
+  onMenuAction: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, payload) => callback(payload || {});
+    ipcRenderer.on('mineradio-menu-action', listener);
+    return () => ipcRenderer.removeListener('mineradio-menu-action', listener);
   },
   setDesktopLyricsEnabled: (enabled, payload) => ipcRenderer.invoke('mineradio-desktop-lyrics-set-enabled', !!enabled, payload || {}),
   updateDesktopLyrics: (payload) => ipcRenderer.invoke('mineradio-desktop-lyrics-update', payload || {}),
@@ -47,6 +68,8 @@ contextBridge.exposeInMainWorld('desktopWindow', {
 });
 
 window.addEventListener('DOMContentLoaded', () => {
-  document.documentElement.classList.add('desktop-shell-root');
-  document.body.classList.add('desktop-shell');
+  document.documentElement.classList.add('desktop-shell-root', `platform-${platform}`);
+  document.documentElement.dataset.platform = platform;
+  document.documentElement.dataset.arch = arch;
+  document.body.classList.add('desktop-shell', `platform-${platform}`);
 });

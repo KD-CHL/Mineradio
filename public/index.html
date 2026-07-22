@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Mineradio</title>
 <meta name="referrer" content="no-referrer">
 <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Inter:wght@200;300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700;900&family=UnifrakturCook:wght@700&display=swap" rel="stylesheet">
@@ -70,6 +70,16 @@ body.desktop-shell #trial-banner{top:112px}
 body.desktop-shell #ai-depth-chip{top:112px}
 body.desktop-shell #beat-chip{top:154px}
 body.desktop-shell #toast{top:60px}
+html.platform-darwin,html.platform-darwin body{color-scheme:dark}
+body.desktop-shell.platform-darwin #desktop-window-shell{border-radius:14px;clip-path:inset(0 round 14px)}
+body.desktop-shell.platform-darwin #desktop-titlebar{height:48px;padding-left:max(86px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right))}
+body.desktop-shell.platform-darwin .desktop-window-btn{display:none!important}
+body.desktop-shell.platform-darwin .desktop-window-controls{margin-left:auto}
+body.desktop-shell.platform-darwin #search-area.peek,
+body.desktop-shell.platform-darwin #search-area.stage-mode.peek{top:44px}
+body.desktop-shell.platform-darwin.desktop-fullscreen #desktop-window-shell{border-radius:0;clip-path:none}
+body.desktop-shell.platform-darwin.desktop-fullscreen #search-area.peek{top:max(24px,env(safe-area-inset-top))}
+body.desktop-shell.platform-darwin.desktop-fullscreen #top-right{top:max(24px,env(safe-area-inset-top));right:max(24px,env(safe-area-inset-right))}
 #fullscreen-diy-zone{display:none;position:fixed;z-index:520;top:var(--fullscreen-diy-top,24px);left:var(--fullscreen-diy-left,calc(100vw - 510px));width:var(--fullscreen-diy-width,128px);height:52px;align-items:center;justify-content:center;pointer-events:none;-webkit-app-region:no-drag}
 #fullscreen-diy-btn{min-width:108px;height:34px;opacity:0;pointer-events:none;transform:translateY(-18px) scale(.96);transition:opacity .2s cubic-bezier(.16,1,.3,1),transform .2s cubic-bezier(.16,1,.3,1),background .18s,color .18s,border-color .18s,box-shadow .18s}
 body.visual-guide-active #fullscreen-diy-zone{opacity:0;pointer-events:none!important;transition:opacity .18s cubic-bezier(.16,1,.3,1)}
@@ -2729,14 +2739,16 @@ var VISUAL_GUIDE_SEEN_STORE_KEY = 'mineradio-visual-guide-seen-v2';
 var LOCAL_BEATMAP_STORE_KEY = 'mineradio-local-beatmaps-v1';
 var LOCAL_BEAT_PREF_STORE_KEY = 'mineradio-local-beatmap-prefs-v1';
 var LOCAL_BEAT_COMBOS = ['', 'downbeat', 'push', 'drop', 'rebound', 'accent'];
+var IS_MAC_DESKTOP = !!(window.desktopWindow && window.desktopWindow.platform === 'darwin');
+var GLOBAL_HOTKEY_PREFIX = IS_MAC_DESKTOP ? 'Meta+Alt+' : 'Ctrl+Alt+';
 var HOTKEY_ACTIONS = [
-  { key:'togglePlay', label:'播放 / 暂停', category:'播放', local:'Space', global:'Ctrl+Alt+Space' },
-  { key:'prevTrack', label:'上一首', category:'播放', local:'ArrowLeft', global:'Ctrl+Alt+ArrowLeft' },
-  { key:'nextTrack', label:'下一首', category:'播放', local:'ArrowRight', global:'Ctrl+Alt+ArrowRight' },
-  { key:'volumeUp', label:'音量增加', category:'音量', local:'ArrowUp', global:'Ctrl+Alt+ArrowUp' },
-  { key:'volumeDown', label:'音量降低', category:'音量', local:'ArrowDown', global:'Ctrl+Alt+ArrowDown' },
-  { key:'toggleFullscreen', label:'全屏', category:'窗口', local:'KeyF', global:'Ctrl+Alt+KeyF' },
-  { key:'toggleDesktopLyrics', label:'桌面歌词', category:'歌词', local:'Alt+KeyL', global:'Ctrl+Alt+KeyL' }
+  { key:'togglePlay', label:'播放 / 暂停', category:'播放', local:'Space', global:GLOBAL_HOTKEY_PREFIX + 'Space' },
+  { key:'prevTrack', label:'上一首', category:'播放', local:'ArrowLeft', global:GLOBAL_HOTKEY_PREFIX + 'ArrowLeft' },
+  { key:'nextTrack', label:'下一首', category:'播放', local:'ArrowRight', global:GLOBAL_HOTKEY_PREFIX + 'ArrowRight' },
+  { key:'volumeUp', label:'音量增加', category:'音量', local:'ArrowUp', global:GLOBAL_HOTKEY_PREFIX + 'ArrowUp' },
+  { key:'volumeDown', label:'音量降低', category:'音量', local:'ArrowDown', global:GLOBAL_HOTKEY_PREFIX + 'ArrowDown' },
+  { key:'toggleFullscreen', label:'全屏', category:'窗口', local:'KeyF', global:GLOBAL_HOTKEY_PREFIX + 'KeyF' },
+  { key:'toggleDesktopLyrics', label:'桌面歌词', category:'歌词', local:'Alt+KeyL', global:GLOBAL_HOTKEY_PREFIX + 'KeyL' }
 ];
 var hotkeyCaptureState = null;
 var hotkeyGlobalStatus = {};
@@ -2829,6 +2841,9 @@ var updatePreviewState = {
   configured: false,
   preview: true,
   updateAvailable: false,
+  platform: '',
+  arch: '',
+  platformCompatible: true,
   releaseUrl: '',
   downloadUrl: '',
   patchAvailable: false,
@@ -2848,9 +2863,9 @@ var updatePreviewState = {
   patchFallbackTried: false,
   hero: '当前版本，更新检测已就绪。',
   notes: [
-    '安装包文字对比修复',
-    '安装目录可自由选择',
-    '单实例与快捷方式修复'
+    '跨平台更新检测已就绪',
+    '更新包会按系统与架构安全匹配',
+    '下载前会验证文件完整性'
   ]
 };
 function readSavedVolume() {
@@ -18338,12 +18353,75 @@ function pauseCurrentAudioForTrackSwitch() {
   syncPlaybackStateFromAudioEvent('track-switch');
 }
 
+var mediaSessionControlsReady = false;
+function initMediaSessionControls() {
+  if (mediaSessionControlsReady || !navigator.mediaSession) return;
+  mediaSessionControlsReady = true;
+  function bind(action, handler) {
+    try { navigator.mediaSession.setActionHandler(action, handler); } catch (_) {}
+  }
+  bind('play', function(){ if (!audio || audio.paused) togglePlay(); });
+  bind('pause', function(){ if (audio && !audio.paused) togglePlay(); });
+  bind('previoustrack', prevTrack);
+  bind('nexttrack', nextTrack);
+  bind('seekbackward', function(details){
+    if (!audio) return;
+    audio.currentTime = Math.max(0, audio.currentTime - (Number(details && details.seekOffset) || 10));
+  });
+  bind('seekforward', function(details){
+    if (!audio) return;
+    var duration = getPlaybackDurationSeconds();
+    audio.currentTime = Math.min(duration || Infinity, audio.currentTime + (Number(details && details.seekOffset) || 10));
+  });
+  bind('seekto', function(details){
+    if (!audio || !details || !isFinite(details.seekTime)) return;
+    if (details.fastSeek && typeof audio.fastSeek === 'function') audio.fastSeek(details.seekTime);
+    else audio.currentTime = details.seekTime;
+  });
+  bind('stop', function(){
+    if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    syncPlaybackStateFromAudioEvent('stop');
+  });
+}
+
+function syncMediaSessionMetadata(song) {
+  if (!navigator.mediaSession || typeof window.MediaMetadata !== 'function' || !song) return;
+  var artwork = [];
+  if (song.cover) {
+    [96, 192, 384, 512].forEach(function(size){
+      artwork.push({ src: coverUrlWithSize(song.cover, size), sizes: size + 'x' + size, type: 'image/jpeg' });
+    });
+  }
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: song.name || 'Mineradio',
+      artist: song.artist || '',
+      album: song.album || song.albumName || 'Mineradio',
+      artwork: artwork
+    });
+  } catch (_) {}
+}
+
+function syncMediaSessionPosition() {
+  if (!navigator.mediaSession || typeof navigator.mediaSession.setPositionState !== 'function') return;
+  var duration = getPlaybackDurationSeconds();
+  if (!isFinite(duration) || duration <= 0) return;
+  var position = Math.max(0, Math.min(getPlaybackCurrentSeconds(), Math.max(0, duration - 0.001)));
+  try {
+    navigator.mediaSession.setPositionState({ duration: duration, playbackRate: (audio && audio.playbackRate) || 1, position: position });
+  } catch (_) {}
+}
+
 function syncPlaybackStateFromAudioEvent(reason) {
   var isPlaying = !!(audio && audio.src && !audio.paused && !audio.ended);
   playing = isPlaying;
   setPlayIcon(isPlaying);
   if (!isPlaying) hideLoading();
   if (reason === 'play' || reason === 'playing') switchPlaybackVisualToEmily();
+  if (navigator.mediaSession) navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+  syncMediaSessionPosition();
   forcePlaybackControlsInteractive();
 }
 
@@ -18411,6 +18489,7 @@ async function playQueueAt(idx, opts) {
   markPlayPhase('track-setup');
   var song = safePlaybackStep('hydrate-song', function(){ return hydrateCustomCover(playQueue[idx]); }) || playQueue[idx];
   playQueue[idx] = song;
+  safePlaybackStep('media-session-metadata', function(){ syncMediaSessionMetadata(song); });
   var playbackContext = opts.context || (song && song.radioContext) || null;
   activeRadioContext = playbackContext || null;
   safeRenderQueuePanel('play-queue-at-switch', { scrollCurrent: miniQueueOpen });
@@ -19915,6 +19994,7 @@ function updatePlaybackProgressUi() {
   setProgressVisual(durationSec > 0 ? (currentSec / durationSec * 100) : 0);
   var timeDisplay = document.getElementById('time-display');
   if (timeDisplay) timeDisplay.textContent = formatProgramTime(currentSec) + ' / ' + (durationSec > 0 ? formatProgramTime(durationSec) : '0:00');
+  syncMediaSessionPosition();
 }
 function bindPlaybackProgressEvents(audioEl) {
   if (!audioEl || audioEl._mineradioProgressBound) return;
@@ -21848,10 +21928,10 @@ function normalizeHotkeyEvent(e) {
   return mods.concat([code]).join('+');
 }
 function hotkeyDisplayPart(part) {
-  if (part === 'Ctrl') return 'Ctrl';
-  if (part === 'Alt') return 'Alt';
+  if (part === 'Ctrl') return IS_MAC_DESKTOP ? 'Control' : 'Ctrl';
+  if (part === 'Alt') return IS_MAC_DESKTOP ? 'Option' : 'Alt';
   if (part === 'Shift') return 'Shift';
-  if (part === 'Meta') return 'Win';
+  if (part === 'Meta') return IS_MAC_DESKTOP ? 'Command' : 'Win';
   if (part === 'Space') return 'Space';
   if (part === 'ArrowLeft') return 'Left';
   if (part === 'ArrowRight') return 'Right';
@@ -21874,7 +21954,7 @@ function hotkeyToAccelerator(hotkey) {
     if (part === 'Ctrl') return 'Control';
     if (part === 'Alt') return 'Alt';
     if (part === 'Shift') return 'Shift';
-    if (part === 'Meta') return 'Super';
+    if (part === 'Meta') return IS_MAC_DESKTOP ? 'Command' : 'Super';
     if (part === 'Space') return 'Space';
     if (part === 'ArrowLeft') return 'Left';
     if (part === 'ArrowRight') return 'Right';
@@ -22711,8 +22791,11 @@ function applyLatestUpdateInfo(data) {
   updatePreviewState.configured = !!data.configured;
   updatePreviewState.preview = !!data.preview;
   updatePreviewState.updateAvailable = !!data.updateAvailable;
+  updatePreviewState.platform = data.platform || release.platform || updatePreviewState.platform;
+  updatePreviewState.arch = data.arch || release.arch || updatePreviewState.arch;
   updatePreviewState.releaseUrl = release.htmlUrl || data.htmlUrl || '';
   updatePreviewState.downloadUrl = release.downloadUrl || data.downloadUrl || '';
+  updatePreviewState.platformCompatible = release.platformCompatible !== false && data.platformCompatible !== false;
   updatePreviewState.patchAvailable = !!(release.patchAvailable && release.patch && release.patch.downloadUrl);
   updatePreviewState.patchUrl = updatePreviewState.patchAvailable ? release.patch.downloadUrl : '';
   updatePreviewState.patchFallbackTried = false;
@@ -22787,27 +22870,30 @@ function syncUpdatePreviewStateClass() {
   var btn = document.getElementById('update-primary-btn');
   var canDownloadUpdate = updatePreviewState.configured && updatePreviewState.updateAvailable && updatePreviewState.downloadUrl;
   var canOpenRelease = updatePreviewState.configured && updatePreviewState.updateAvailable && !updatePreviewState.downloadUrl && updatePreviewState.releaseUrl;
+  var hasNoCompatiblePackage = updatePreviewState.configured && updatePreviewState.updateAvailable && !updatePreviewState.downloadUrl && !updatePreviewState.platformCompatible;
   if (label) {
     if (isDownloading) label.textContent = (isPatch ? '快速补丁 ' : '正在下载 ') + Math.round(updatePreviewState.progress) + '%';
-    else if (isOpening) label.textContent = '正在打开安装包';
-    else if (isError && updatePreviewState.mode === 'patch' && updatePreviewState.downloadUrl) label.textContent = '下载完整安装包';
+    else if (isOpening) label.textContent = '正在打开更新包';
+    else if (isError && updatePreviewState.mode === 'patch' && updatePreviewState.downloadUrl) label.textContent = '下载完整更新包';
     else if (isError) label.textContent = updatePreviewState.mode === 'installer' ? '重试下载' : '重试更新';
     else if (isReady && isPatch && updatePreviewState.restartRequired) label.textContent = '重启生效';
     else if (isReady && isPatch) label.textContent = '补丁已应用';
-    else if (isReady && updatePreviewState.installerOpened) label.textContent = '安装包已打开';
-    else if (isReady && updatePreviewState.installerPath) label.textContent = updatePreviewState.cached ? '打开已下载安装包' : '打开安装包';
-    else if (isReady) label.textContent = updatePreviewState.configured ? '打开安装包' : '预览完成';
-    else label.textContent = updatePreviewState.patchAvailable ? '安装快速补丁' : ((canDownloadUpdate || canOpenRelease) ? '下载完整安装包' : '立即更新');
+    else if (isReady && updatePreviewState.installerOpened) label.textContent = '更新包已打开';
+    else if (isReady && updatePreviewState.installerPath) label.textContent = updatePreviewState.cached ? '打开已下载更新包' : '打开更新包';
+    else if (isReady) label.textContent = updatePreviewState.configured ? '打开更新包' : '预览完成';
+    else if (hasNoCompatiblePackage && canOpenRelease) label.textContent = '查看发布页面';
+    else label.textContent = updatePreviewState.patchAvailable ? '安装快速补丁' : ((canDownloadUpdate || canOpenRelease) ? '下载完整更新包' : '立即更新');
   }
   if (btn) btn.disabled = false;
   var foot = document.getElementById('update-footnote');
   if (foot) {
-    if (isDownloading) foot.textContent = (updatePreviewState.message || (isPatch ? '正在下载快速补丁' : '正在下载完整安装包')) + (updateProgressDetailText() ? ' · ' + updateProgressDetailText() : '');
+    if (isDownloading) foot.textContent = (updatePreviewState.message || (isPatch ? '正在下载快速补丁' : '正在下载完整更新包')) + (updateProgressDetailText() ? ' · ' + updateProgressDetailText() : '');
     else if (isError) foot.textContent = '下载失败：' + (updatePreviewState.errorReason || updatePreviewState.errorDetail || updatePreviewState.message || '请稍后重试') + (updatePreviewState.failedAttempts && updatePreviewState.failedAttempts.length ? ' · 已尝试 ' + updatePreviewState.failedAttempts.length + ' 条线路' : '');
     else if (isReady && isPatch) foot.textContent = updatePreviewState.restartRequired ? '快速补丁已应用，重启 Mineradio 后生效。' : '快速补丁已应用。';
-    else if (isReady) foot.textContent = updatePreviewState.cached ? '已复用上次校验通过的安装包，不会重复下载。' : '安装包已准备好，点击按钮后再打开安装。';
-    else if (updatePreviewState.patchAvailable) foot.textContent = '优先使用轻量补丁，只更新缺失或变更的资源文件；不适用时可下载完整安装包。';
-    else foot.textContent = updatePreviewState.updateAvailable ? '没有可用快速补丁时会下载完整安装包。' : '当前版本已是最新。';
+    else if (isReady) foot.textContent = updatePreviewState.cached ? '已复用上次校验通过的更新包，不会重复下载。' : '更新包已准备好，点击按钮后再打开。';
+    else if (hasNoCompatiblePackage) foot.textContent = '当前 Release 没有适配此系统与架构的更新包，已阻止下载其他平台文件。';
+    else if (updatePreviewState.patchAvailable) foot.textContent = '优先使用轻量补丁，只更新缺失或变更的资源文件；不适用时可下载完整更新包。';
+    else foot.textContent = updatePreviewState.updateAvailable ? '没有可用快速补丁时会下载完整更新包。' : '当前版本已是最新。';
   }
 }
 
@@ -22894,7 +22980,7 @@ async function startRealUpdateDownload() {
   updatePreviewState.errorReason = '';
   updatePreviewState.errorDetail = '';
   updatePreviewState.failedAttempts = [];
-  updatePreviewState.message = '正在下载完整安装包';
+  updatePreviewState.message = '正在下载完整更新包';
   updateUpdatePreviewProgress(0);
   try {
     var job = await apiJson('/api/update/download', { method: 'POST' });
@@ -22956,7 +23042,7 @@ async function startRealUpdatePatch() {
     updatePreviewState.message = updatePreviewState.errorReason;
     updateUpdatePreviewProgress(0);
     updatePreviewState.patchFallbackTried = true;
-    showToast('快速补丁不可用，可手动下载完整安装包');
+    showToast('快速补丁不可用，可手动下载完整更新包');
   }
 }
 
@@ -23013,7 +23099,7 @@ function applyUpdateDownloadJob(job) {
     updateUpdatePreviewProgress(job && job.progress || updatePreviewState.progress || 0);
     if (updatePreviewState.mode === 'patch' && updatePreviewState.downloadUrl && !updatePreviewState.patchFallbackTried) {
       updatePreviewState.patchFallbackTried = true;
-      showToast('快速补丁失败，可手动下载完整安装包：' + updatePreviewState.errorReason);
+      showToast('快速补丁失败，可手动下载完整更新包：' + updatePreviewState.errorReason);
       return;
     }
     showToast('更新下载失败：' + updatePreviewState.errorReason);
@@ -23050,7 +23136,13 @@ function applyUpdateDownloadJob(job) {
     if (updatePreviewState.mode === 'patch') {
       showToast(updatePreviewState.restartRequired ? '快速补丁已应用，重启后生效' : '快速补丁已应用');
     } else if (updatePreviewState.installerPath) {
-      showToast(updatePreviewState.cached ? '已复用上次下载的安装包' : '安装包已下载，点击按钮打开');
+      showToast(updatePreviewState.cached ? '已复用上次下载的更新包' : '更新包已下载，点击按钮打开');
+      if (window.desktopWindow && typeof window.desktopWindow.showNotification === 'function') {
+        window.desktopWindow.showNotification({
+          title: 'Mineradio 更新已就绪',
+          body: updatePreviewState.cached ? '已找到校验通过的更新包，可回到 Mineradio 打开。' : '更新包下载完成，可回到 Mineradio 打开。'
+        }).catch(function(){});
+      }
     }
   }
 }
@@ -23077,7 +23169,7 @@ async function openDownloadedUpdateInstaller(filePath) {
       updatePreviewState.installerOpened = true;
       updatePreviewState.status = 'ready';
       syncUpdatePreviewStateClass();
-      showToast('安装包已打开');
+      showToast('更新包已打开');
       return;
     }
     throw new Error('DESKTOP_BRIDGE_MISSING');
@@ -23085,7 +23177,7 @@ async function openDownloadedUpdateInstaller(filePath) {
     updatePreviewState.status = 'ready';
     syncUpdatePreviewStateClass();
     if (updatePreviewState.releaseUrl) window.open(updatePreviewState.releaseUrl, '_blank');
-    showToast('无法自动打开安装包，已尝试打开更新页面');
+    showToast('无法自动打开更新包，已尝试打开更新页面');
   }
 }
 
@@ -26410,6 +26502,10 @@ function toggleFullscreen() {
 
   document.documentElement.classList.add('desktop-shell-root');
   document.body.classList.add('desktop-shell');
+  if (api.platform) {
+    document.documentElement.classList.add('platform-' + api.platform);
+    document.body.classList.add('platform-' + api.platform);
+  }
   document.body.classList.remove('desktop-fullscreen');
   desktopFullscreenActive = false;
   syncCursorAutoHideMode();
@@ -26453,6 +26549,39 @@ function toggleFullscreen() {
       if (action === 'close') api.close();
     });
   });
+
+  if (typeof api.onMenuAction === 'function') {
+    api.onMenuAction(function(payload){
+      var action = payload && payload.action;
+      if (action === 'open-settings') {
+        if (!diyPlayerMode) applyDiyMode(true, { save: true, toast: false, animate: true });
+        toggleFxPanel(true);
+      } else if (action === 'toggle-play') togglePlay();
+      else if (action === 'previous-track') prevTrack();
+      else if (action === 'next-track') nextTrack();
+      else if (action === 'show-guide') startVisualGuide({ manual: true });
+      else if (action === 'open-update') openUpdatePanel();
+      else if (action === 'show-downloaded-update') {
+        if (updatePreviewState.installerPath && typeof api.showUpdateInFolder === 'function') {
+          api.showUpdateInFolder(updatePreviewState.installerPath).then(function(result){
+            if (!result || result.ok === false) showToast('暂时没有可在 Finder 中显示的更新包');
+          }).catch(function(){ showToast('暂时没有可在 Finder 中显示的更新包'); });
+        } else {
+          showToast('暂时没有已下载的更新包');
+        }
+      }
+    });
+  }
+
+  var platformCapabilities = api.capabilities || {};
+  if (api.platform === 'darwin' && platformCapabilities.desktopLyricsGlobalMiddleClick === false) {
+    var desktopLyricsLock = document.getElementById('t-desktopLyricsClickThrough');
+    if (desktopLyricsLock) desktopLyricsLock.title = '锁定后保持鼠标穿透；请回到 Mineradio 设置中解锁';
+  }
+  if (platformCapabilities.wallpaperMode === false) {
+    var wallpaperToggle = document.getElementById('t-wallpaperMode');
+    if (wallpaperToggle) wallpaperToggle.title = '当前平台没有可靠的系统壁纸窗口等价实现，已安全禁用';
+  }
 
   if (typeof api.onDesktopLyricsLockState === 'function') {
     api.onDesktopLyricsLockState(function(payload){
@@ -26501,6 +26630,7 @@ bindFxPanel();
 applySavedLyricPaletteState();
 bindQualityControl();
 bindVolumeControls();
+initMediaSessionControls();
 initControlGlassSurface();
 bindPlayerControlAnimations();
 scheduleUiWarmTask(function(){

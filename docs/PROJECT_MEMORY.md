@@ -176,6 +176,13 @@
 
 ## Memory Entries
 
+### 2026-07-17 - macOS 26 移植与跨平台边界
+
+- 用户认可/要求保留：Mineradio 需要同时保留 Windows 构建，并提供真正符合 macOS 习惯的 arm64/x64 版本；最低系统为 macOS 26；没有 Apple Developer 证书时只交付明确标注的 ad-hoc、未公证测试包。
+- 涉及文件：`desktop/main.js`、`desktop/preload.js`、`desktop/platform-adapter.js`、`desktop/secret-store.js`、`server.js`、`public/index.html`、`package.json`、`build/entitlements.mac*.plist`、`build/mac-build.js`、`docs/MACOS_INSTALL.md`、`docs/MACOS_PORT_AUDIT.md`。
+- 关键参数/实现：macOS 使用 Application Support/Caches/Logs/Temporary Directory 和 Keychain-backed safeStorage；Windows 专用 D3D11、快捷方式、PowerShell 鼠标监听、WorkerW 壁纸均有平台边界；Mac 更新只允许匹配架构的 DMG/Mac ZIP；默认 ad-hoc 权限为 `allow-jit + disable-library-validation`，正式 Developer ID 权限仅保留 `allow-jit`。
+- 禁止回退或改坏的点：不要在 macOS 下载或打开 EXE/MSI；不要把 ad-hoc 称为正式签名或公证；不要为壁纸模式伪造成功；不要把 macOS 平台判断重新散落到业务代码；不要破坏 Windows NSIS 构建和既有视觉黄金版本。
+
 ### 2026-06-25 - 安装器路径与卸载防误删 P0 规则
 
 - 用户认可/要求保留：安装器默认优先 `D:\Mineradio`，D 不存在再 E/F/.../Z；只有电脑确实没有任何 D-Z 盘时，才放行 `C:\Mineradio`。用户手动选 C 盘时也必须按这个规则拦截。

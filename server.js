@@ -48,21 +48,31 @@ const http = require('http');
 const https = require('https');
 const fs   = require('fs');
 const path = require('path');
+const os = require('os');
 const crypto = require('crypto');
 const tls = require('tls');
 const { once } = require('events');
 const { fileURLToPath } = require('url');
 const { analyzePodcastDjStream, analyzePodcastDjIntro } = require('./dj-analyzer');
+const { readSecret, writeSecret } = require('./desktop/secret-store');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const RUNTIME_PLATFORM = process.env.MINERADIO_PLATFORM || process.platform;
+const RUNTIME_ARCH = process.env.MINERADIO_ARCH || process.arch;
+const UA_PLATFORM = RUNTIME_PLATFORM === 'darwin'
+  ? 'Macintosh; Intel Mac OS X 10_15_7'
+  : (RUNTIME_PLATFORM === 'win32' ? 'Windows NT 10.0; Win64; x64' : 'X11; Linux x86_64');
+const UA = `Mozilla/5.0 (${UA_PLATFORM}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`;
 const COOKIE_FILE = process.env.COOKIE_FILE || path.join(__dirname, '.cookie');
 const QQ_COOKIE_FILE = process.env.QQ_COOKIE_FILE || path.join(__dirname, '.qq-cookie');
 const UPDATE_WORK_DIR = process.env.MINERADIO_UPDATE_DIR || path.join(__dirname, 'updates');
 const UPDATE_DOWNLOAD_DIR = process.env.MINERADIO_UPDATE_DOWNLOAD_DIR || path.join(UPDATE_WORK_DIR, 'downloads');
 const UPDATE_PATCH_BACKUP_DIR = process.env.MINERADIO_PATCH_BACKUP_DIR || path.join(UPDATE_WORK_DIR, 'backups', 'patches');
-const BEATMAP_CACHE_DIR = process.env.MINERADIO_BEAT_CACHE_DIR || 'D:\\MineradioCache\\beatmaps';
+const DEFAULT_BEATMAP_CACHE_DIR = RUNTIME_PLATFORM === 'win32'
+  ? 'D:\\MineradioCache\\beatmaps'
+  : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'Mineradio', 'beatmaps');
+const BEATMAP_CACHE_DIR = process.env.MINERADIO_BEAT_CACHE_DIR || DEFAULT_BEATMAP_CACHE_DIR;
 const APP_PACKAGE = readPackageInfo();
 const APP_VERSION = process.env.MINERADIO_VERSION || APP_PACKAGE.version || '0.9.11';
 const UPDATE_CONFIG = readUpdateConfig(APP_PACKAGE);
@@ -170,20 +180,16 @@ function rawCookieFallback(input) {
   if (Array.isArray(input) && input.every(item => typeof item === 'string')) return input.join('; ').trim();
   return '';
 }
-let userCookie = '';
-try { if (fs.existsSync(COOKIE_FILE)) userCookie = fs.readFileSync(COOKIE_FILE, 'utf8').trim(); }
-catch (e) { userCookie = ''; }
+let userCookie = readSecret('netease-cookie', COOKIE_FILE);
 function saveCookie(c) {
   userCookie = normalizeCookieHeader(c) || rawCookieFallback(c);
-  try { fs.writeFileSync(COOKIE_FILE, userCookie); } catch (e) {}
+  writeSecret('netease-cookie', userCookie, COOKIE_FILE);
 }
 
-let qqCookie = '';
-try { if (fs.existsSync(QQ_COOKIE_FILE)) qqCookie = fs.readFileSync(QQ_COOKIE_FILE, 'utf8').trim(); }
-catch (e) { qqCookie = ''; }
+let qqCookie = readSecret('qq-cookie', QQ_COOKIE_FILE);
 function saveQQCookie(c) {
   qqCookie = normalizeCookieHeader(c) || rawCookieFallback(c);
-  try { fs.writeFileSync(QQ_COOKIE_FILE, qqCookie); } catch (e) {}
+  writeSecret('qq-cookie', qqCookie, QQ_COOKIE_FILE);
 }
 
 // ---------- 工具 ----------
@@ -362,11 +368,53 @@ function extractReleaseNotes(body) {
   });
   return notes.slice(0, 4);
 }
+function updateAssetArchitecture(name) {
+  const value = String(name || '').toLowerCase();
+  if (/(^|[-_.])(universal|universal2)([-_.]|$)/.test(value)) return 'universal';
+  if (/(^|[-_.])(arm64|aarch64)([-_.]|$)/.test(value)) return 'arm64';
+  if (/(^|[-_.])(x64|x86_64|amd64|intel)([-_.]|$)/.test(value)) return 'x64';
+  return '';
+}
+function updateAssetPlatformScore(asset) {
+  const name = String(asset && (asset.name || asset.downloadUrl || asset.browser_download_url) || '');
+  const lower = name.toLowerCase().split(/[?#]/)[0];
+  const ext = path.extname(lower);
+  let score = -1;
+  if (RUNTIME_PLATFORM === 'darwin') {
+    if (ext === '.dmg') score = 80;
+    else if (ext === '.zip' && /(mac|macos|darwin|osx|arm64|aarch64|x64|x86_64|universal)/i.test(lower)) score = 55;
+    else return -1;
+  } else if (RUNTIME_PLATFORM === 'win32') {
+    if (ext === '.exe') score = 80;
+    else if (ext === '.msi') score = 70;
+    else return -1;
+  } else {
+    if (ext === '.appimage') score = 80;
+    else if (ext === '.deb' || ext === '.rpm') score = 70;
+    else if (ext === '.zip' && /(linux|appimage)/i.test(lower)) score = 50;
+    else return -1;
+  }
+  const assetArch = updateAssetArchitecture(lower);
+  if (assetArch && assetArch !== 'universal' && assetArch !== RUNTIME_ARCH) return -1;
+  if (assetArch === RUNTIME_ARCH) score += 30;
+  else if (assetArch === 'universal') score += 24;
+  else score += 8;
+  return score;
+}
+function isCompatibleUpdateAsset(asset) {
+  return updateAssetPlatformScore(asset) >= 0;
+}
+function defaultUpdatePackageName(version) {
+  if (RUNTIME_PLATFORM === 'darwin') return `Mineradio-${version || APP_VERSION}-mac-${RUNTIME_ARCH}.dmg`;
+  if (RUNTIME_PLATFORM === 'win32') return `Mineradio-${version || APP_VERSION}-Setup.exe`;
+  return `Mineradio-${version || APP_VERSION}-${RUNTIME_ARCH}.AppImage`;
+}
 function pickReleaseAsset(assets) {
   const list = Array.isArray(assets) ? assets : [];
-  const preferred = list.find(a => /\.(exe|msi)$/i.test(a && a.name || ''))
-    || list.find(a => /\.(zip|7z)$/i.test(a && a.name || ''))
-    || list[0];
+  const preferred = list
+    .map((asset, index) => ({ asset, index, score: updateAssetPlatformScore(asset) }))
+    .filter(item => item.score >= 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.asset;
   if (!preferred) return null;
   const digest = assetDigestInfo(preferred);
   const candidates = uniqueDownloadCandidates(preferred.browser_download_url || '');
@@ -385,6 +433,7 @@ function patchAssetVersions(name) {
   return matches.map(item => normalizeVersion(item.replace(/[._-]/g, '.'))).filter(Boolean);
 }
 function pickPatchAsset(assets, currentVersion, latestVersion) {
+  if (RUNTIME_PLATFORM !== 'win32') return null;
   const list = Array.isArray(assets) ? assets : [];
   const current = normalizeVersion(currentVersion || APP_VERSION);
   const latest = normalizeVersion(latestVersion || '');
@@ -434,8 +483,12 @@ function normalizeManifestUpdateInfo(data) {
     || release.name
     || APP_VERSION
   ) || APP_VERSION;
-  const downloadUrl = release.downloadUrl || data.downloadUrl || asset.downloadUrl || asset.browser_download_url || '';
-  const patch = release.patch || data.patch || null;
+  const rawDownloadUrl = release.downloadUrl || data.downloadUrl || asset.downloadUrl || asset.browser_download_url || '';
+  const manifestAssetName = asset.name || updateAssetNameFromUrl(rawDownloadUrl) || '';
+  const downloadUrl = rawDownloadUrl && isCompatibleUpdateAsset({ name: manifestAssetName, downloadUrl: rawDownloadUrl })
+    ? rawDownloadUrl
+    : '';
+  const patch = RUNTIME_PLATFORM === 'win32' ? (release.patch || data.patch || null) : null;
   const assetUrls = [downloadUrl].concat(Array.isArray(asset.downloadUrls) ? asset.downloadUrls : []);
   const patchUrls = patch ? [patch.downloadUrl].concat(Array.isArray(patch.downloadUrls) ? patch.downloadUrls : []) : [];
   const patchInfo = patch && patch.downloadUrl ? {
@@ -453,7 +506,7 @@ function normalizeManifestUpdateInfo(data) {
     ? release.notes.slice(0, 4).map(cleanReleaseLine).filter(Boolean)
     : (extractReleaseNotes(release.body || data.body).length ? extractReleaseNotes(release.body || data.body) : UPDATE_FALLBACK_NOTES);
   const assetInfo = downloadUrl ? {
-    name: asset.name || updateAssetNameFromUrl(downloadUrl) || `Mineradio-${latestVersion}-Setup.exe`,
+    name: asset.name || updateAssetNameFromUrl(downloadUrl) || defaultUpdatePackageName(latestVersion),
     size: Number(asset.size || 0) || 0,
     contentType: asset.contentType || asset.content_type || '',
     downloadUrl,
@@ -464,6 +517,8 @@ function normalizeManifestUpdateInfo(data) {
   return {
     configured: true,
     preview: false,
+    platform: RUNTIME_PLATFORM,
+    arch: RUNTIME_ARCH,
     updateAvailable: data.updateAvailable != null ? !!data.updateAvailable : compareVersions(latestVersion, APP_VERSION) > 0,
     currentVersion: APP_VERSION,
     latestVersion,
@@ -477,6 +532,7 @@ function normalizeManifestUpdateInfo(data) {
       asset: assetInfo,
       patch: patchInfo,
       patchAvailable: !!(patchInfo && patchInfo.downloadUrl && compareVersions(latestVersion, APP_VERSION) > 0),
+      platformCompatible: !!assetInfo,
       summary: release.summary || data.summary || notes[0] || '发现新版本，建议更新。',
       notes,
     },
@@ -507,8 +563,8 @@ async function fetchManifestUpdateInfo(ref) {
 function beatCacheRootInfo() {
   const dir = path.resolve(BEATMAP_CACHE_DIR);
   const root = path.parse(dir).root;
-  const drive = root ? root.replace(/[\\\/]+$/, '').toUpperCase() : '';
-  const allowed = !!root && !/^C:$/i.test(drive);
+  const drive = RUNTIME_PLATFORM === 'win32' && root ? root.replace(/[\\\/]+$/, '').toUpperCase() : '';
+  const allowed = !!root && (RUNTIME_PLATFORM !== 'win32' || !/^C:$/i.test(drive));
   const available = allowed && fs.existsSync(root);
   return { dir, root, drive, allowed, available };
 }
@@ -575,6 +631,8 @@ function localUpdateFallback(reason, opts) {
   return {
     configured,
     preview: UPDATE_CONFIG.preview,
+    platform: RUNTIME_PLATFORM,
+    arch: RUNTIME_ARCH,
     updateAvailable: false,
     currentVersion: APP_VERSION,
     latestVersion: APP_VERSION,
@@ -601,7 +659,7 @@ function classifyUpdateError(err) {
   const message = String(err && err.message || err || '').trim();
   const detail = message || code || '未知错误';
   if (/HASH|DIGEST|CHECKSUM/i.test(code + ' ' + message)) {
-    return { code: code || 'UPDATE_HASH_MISMATCH', reason: '文件校验失败，可能是线路缓存异常，已拦截该安装包。', detail };
+    return { code: code || 'UPDATE_HASH_MISMATCH', reason: '文件校验失败，可能是线路缓存异常，已拦截该更新包。', detail };
   }
   if (/SIZE_MISMATCH|content length/i.test(code + ' ' + message)) {
     return { code: code || 'UPDATE_SIZE_MISMATCH', reason: '下载文件大小不一致，可能是网络中断或线路缓存不完整。', detail };
@@ -658,6 +716,37 @@ function yamlScalar(text, key) {
   if (!match) return '';
   return match[1].trim().replace(/^['"]|['"]$/g, '');
 }
+function yamlFileEntries(text) {
+  const files = [];
+  let current = null;
+  let insideFiles = false;
+  String(text || '').split(/\r?\n/).forEach(line => {
+    if (/^files\s*:\s*$/.test(line)) {
+      insideFiles = true;
+      return;
+    }
+    if (!insideFiles) return;
+    const item = line.match(/^\s*-\s+url\s*:\s*(.+?)\s*$/);
+    if (item) {
+      if (current && current.url) files.push(current);
+      current = { url: item[1].trim().replace(/^['"]|['"]$/g, ''), sha512: '', size: 0 };
+      return;
+    }
+    if (!/^\s+/.test(line) && line.trim()) {
+      insideFiles = false;
+      if (current && current.url) files.push(current);
+      current = null;
+      return;
+    }
+    if (!current) return;
+    const sha512 = line.match(/^\s+sha512\s*:\s*(.+?)\s*$/);
+    if (sha512) current.sha512 = sha512[1].trim().replace(/^['"]|['"]$/g, '');
+    const size = line.match(/^\s+size\s*:\s*(\d+)\s*$/);
+    if (size) current.size = Number(size[1]) || 0;
+  });
+  if (insideFiles && current && current.url) files.push(current);
+  return files;
+}
 function githubReleaseDownloadUrl(version, fileName) {
   const tag = 'v' + normalizeVersion(version);
   const encodedOwner = encodeURIComponent(UPDATE_CONFIG.owner);
@@ -667,9 +756,17 @@ function githubReleaseDownloadUrl(version, fileName) {
 }
 function parseLatestYmlUpdateInfo(text, reason) {
   const latestVersion = normalizeVersion(yamlScalar(text, 'version') || APP_VERSION) || APP_VERSION;
-  const assetPath = yamlScalar(text, 'path') || yamlScalar(text, 'url') || `Mineradio-${latestVersion}-Setup.exe`;
-  const sha512 = normalizeDigest(yamlScalar(text, 'sha512'), 'sha512');
-  const size = Number(yamlScalar(text, 'size') || 0) || 0;
+  const metadataFiles = yamlFileEntries(text);
+  const matchedFile = metadataFiles
+    .map((file, index) => ({ file, index, score: updateAssetPlatformScore({ name: file.url }) }))
+    .filter(item => item.score >= 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.file || null;
+  const assetPath = (matchedFile && matchedFile.url) || yamlScalar(text, 'path') || yamlScalar(text, 'url') || defaultUpdatePackageName(latestVersion);
+  if (!isCompatibleUpdateAsset({ name: assetPath })) {
+    throw updateError('UPDATE_ASSET_PLATFORM_MISMATCH', `No ${RUNTIME_PLATFORM}/${RUNTIME_ARCH} update package in metadata`);
+  }
+  const sha512 = normalizeDigest((matchedFile && matchedFile.sha512) || yamlScalar(text, 'sha512'), 'sha512');
+  const size = Number((matchedFile && matchedFile.size) || yamlScalar(text, 'size') || 0) || 0;
   const releaseDate = yamlScalar(text, 'releaseDate');
   const downloadUrl = githubReleaseDownloadUrl(latestVersion, assetPath);
   const candidates = uniqueDownloadCandidates(downloadUrl);
@@ -685,6 +782,8 @@ function parseLatestYmlUpdateInfo(text, reason) {
   return {
     configured: true,
     preview: false,
+    platform: RUNTIME_PLATFORM,
+    arch: RUNTIME_ARCH,
     updateAvailable: compareVersions(latestVersion, APP_VERSION) > 0,
     currentVersion: APP_VERSION,
     latestVersion,
@@ -707,7 +806,8 @@ function parseLatestYmlUpdateInfo(text, reason) {
 }
 async function fetchLatestYmlUpdateInfo(reason) {
   if (!UPDATE_CONFIG.configured || UPDATE_CONFIG.provider !== 'github') throw updateError('UPDATE_REPOSITORY_NOT_CONFIGURED');
-  const latestYmlUrl = `https://github.com/${encodeURIComponent(UPDATE_CONFIG.owner)}/${encodeURIComponent(UPDATE_CONFIG.repo)}/releases/latest/download/latest.yml`;
+  const metadataName = RUNTIME_PLATFORM === 'darwin' ? 'latest-mac.yml' : (RUNTIME_PLATFORM === 'win32' ? 'latest.yml' : 'latest-linux.yml');
+  const latestYmlUrl = `https://github.com/${encodeURIComponent(UPDATE_CONFIG.owner)}/${encodeURIComponent(UPDATE_CONFIG.repo)}/releases/latest/download/${metadataName}`;
   const candidates = uniqueDownloadCandidates(latestYmlUrl);
   const result = await fetchTextFromCandidates(candidates, 6500);
   return parseLatestYmlUpdateInfo(result.text, reason);
@@ -738,6 +838,8 @@ async function fetchLatestUpdateInfo() {
     return {
       configured: true,
       preview: false,
+      platform: RUNTIME_PLATFORM,
+      arch: RUNTIME_ARCH,
       updateAvailable: compareVersions(latestVersion, APP_VERSION) > 0,
       currentVersion: APP_VERSION,
       latestVersion,
@@ -751,6 +853,7 @@ async function fetchLatestUpdateInfo() {
         asset,
         patch,
         patchAvailable: !!(patch && patch.downloadUrl && compareVersions(latestVersion, APP_VERSION) > 0),
+        platformCompatible: !!asset,
         summary: notes[0] || '发现新版本，建议更新。',
         notes,
       },
@@ -764,13 +867,13 @@ async function fetchLatestUpdateInfo() {
   }
 }
 function safeUpdateFileName(name, version) {
-  const raw = String(name || '').trim() || `Mineradio-${version || APP_VERSION}.exe`;
+  const raw = String(name || '').trim() || defaultUpdatePackageName(version || APP_VERSION);
   const cleaned = raw
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 160);
-  return cleaned || `Mineradio-${version || APP_VERSION}.exe`;
+  return cleaned || defaultUpdatePackageName(version || APP_VERSION);
 }
 function publicUpdateJob(job) {
   if (!job) return { ok: false, error: 'UPDATE_JOB_NOT_FOUND' };
@@ -830,7 +933,7 @@ async function downloadUpdateAsset(job) {
     job.progress = 0;
     job.speedBps = 0;
     job.etaSeconds = 0;
-    job.message = job.total ? '正在下载完整安装包' : '正在下载完整安装包，等待服务器返回大小';
+    job.message = job.total ? '正在下载完整更新包' : '正在下载完整更新包，等待服务器返回大小';
     job.updatedAt = Date.now();
     let speedWindowAt = Date.now();
     let speedWindowBytes = 0;
@@ -857,7 +960,7 @@ async function downloadUpdateAsset(job) {
           const kb = Math.max(1, job.received / 1024);
           job.progress = Math.max(1, Math.min(88, Math.round(Math.log10(kb + 1) * 24)));
         }
-        job.message = job.total > 0 ? '正在下载完整安装包' : '正在下载完整安装包，服务器未提供总大小';
+        job.message = job.total > 0 ? '正在下载完整更新包' : '正在下载完整更新包，服务器未提供总大小';
         job.updatedAt = Date.now();
         if (!writer.write(buf)) await once(writer, 'drain');
       }
@@ -870,7 +973,7 @@ async function downloadUpdateAsset(job) {
     fs.renameSync(tmpPath, job.filePath);
     job.status = 'ready';
     job.progress = 100;
-    job.message = '安装包已下载';
+    job.message = '更新包已下载';
     job.updatedAt = Date.now();
   } catch (e) {
     try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
@@ -936,7 +1039,7 @@ function reuseVerifiedInstallerJob(opts) {
     attempt: 0,
     attempts: opts.attempts || 0,
     mode: 'installer',
-    message: '安装包已下载，可直接打开安装',
+    message: '更新包已下载，可直接打开',
     fileName: opts.fileName || path.basename(opts.filePath),
     filePath: opts.filePath,
     version: opts.version || '',
@@ -1002,7 +1105,7 @@ async function downloadUpdateAssetWithMirrors(job) {
       try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
       ensureMirrorCanBeVerified(job, candidate);
       prepareUpdateJobAttempt(job, candidate, i, candidates.length);
-      job.message = job.total ? '正在下载完整安装包' : '正在下载完整安装包，等待服务器返回大小';
+      job.message = job.total ? '正在下载完整更新包' : '正在下载完整更新包，等待服务器返回大小';
 
       const resp = await fetchWithTimeout(candidate.url, {
         headers: { 'User-Agent': `Mineradio/${APP_VERSION}` },
@@ -1038,7 +1141,7 @@ async function downloadUpdateAssetWithMirrors(job) {
             const kb = Math.max(1, job.received / 1024);
             job.progress = Math.max(1, Math.min(88, Math.round(Math.log10(kb + 1) * 24)));
           }
-          job.message = job.total > 0 ? '正在下载完整安装包' : '正在下载完整安装包，服务器未提供总大小';
+          job.message = job.total > 0 ? '正在下载完整更新包' : '正在下载完整更新包，服务器未提供总大小';
           job.updatedAt = Date.now();
           if (!writer.write(buf)) await once(writer, 'drain');
         }
@@ -1053,7 +1156,7 @@ async function downloadUpdateAssetWithMirrors(job) {
       job.status = 'ready';
       job.progress = 100;
       job.etaSeconds = 0;
-      job.message = '安装包已下载';
+      job.message = '更新包已下载';
       job.updatedAt = Date.now();
       return;
     } catch (err) {
@@ -1074,6 +1177,9 @@ function startUpdateDownloadJob(info) {
   if (!info || !info.configured) return { ok: false, error: 'UPDATE_REPOSITORY_NOT_CONFIGURED' };
   if (!info.updateAvailable) return { ok: false, error: 'NO_UPDATE_AVAILABLE' };
   if (!/^https?:\/\//i.test(downloadUrl)) return { ok: false, error: 'UPDATE_ASSET_MISSING' };
+  if (!isCompatibleUpdateAsset({ name: asset.name || '', downloadUrl })) {
+    return { ok: false, error: 'UPDATE_ASSET_PLATFORM_MISMATCH' };
+  }
 
   const version = info.latestVersion || release.version || '';
   const existing = activeUpdateJobFor(version);
@@ -1242,7 +1348,7 @@ async function downloadAndApplyPatch(job) {
   } catch (e) {
     job.status = 'error';
     job.error = e.message || 'PATCH_APPLY_FAILED';
-    job.message = '快速补丁失败，可改用完整安装包';
+    job.message = '快速补丁失败，可改用完整更新包';
     job.updatedAt = Date.now();
   }
 }
@@ -1328,6 +1434,7 @@ function startUpdatePatchJob(info) {
   const release = info && info.release ? info.release : {};
   const patch = release.patch || {};
   const downloadUrl = patch.downloadUrl || '';
+  if (RUNTIME_PLATFORM !== 'win32') return { ok: false, error: 'PATCH_UNSUPPORTED_PLATFORM' };
   if (!info || !info.configured) return { ok: false, error: 'UPDATE_REPOSITORY_NOT_CONFIGURED' };
   if (!info.updateAvailable) return { ok: false, error: 'NO_UPDATE_AVAILABLE' };
   if (!release.patchAvailable || !/^https?:\/\//i.test(downloadUrl)) return { ok: false, error: 'PATCH_ASSET_MISSING' };
@@ -3249,6 +3356,8 @@ const server = http.createServer(async (req, res) => {
       name: APP_PACKAGE.name || 'mineradio',
       productName: APP_PACKAGE.productName || 'Mineradio',
       version: APP_VERSION,
+      platform: RUNTIME_PLATFORM,
+      arch: RUNTIME_ARCH,
       update: {
         provider: UPDATE_CONFIG.provider,
         configured: UPDATE_CONFIG.configured,
@@ -3256,6 +3365,7 @@ const server = http.createServer(async (req, res) => {
         repo: UPDATE_CONFIG.repo,
         preview: UPDATE_CONFIG.preview,
         manifestOverride: !!UPDATE_CONFIG.manifest,
+        quickResourcePatches: RUNTIME_PLATFORM === 'win32',
       },
     });
     return;

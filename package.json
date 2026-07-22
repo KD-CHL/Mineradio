@@ -9,7 +9,14 @@
   "scripts": {
     "start": "electron .",
     "build:win": "electron-builder --win nsis",
-    "build:win:dir": "electron-builder --win dir"
+    "build:win:dir": "electron-builder --win dir",
+    "build:mac": "node build/mac-build.js dmg arm64 x64",
+    "build:mac:arm64": "node build/mac-build.js dmg arm64",
+    "build:mac:x64": "node build/mac-build.js dmg x64",
+    "build:mac:universal": "node build/mac-build.js dmg universal",
+    "build:mac:dir": "node build/mac-build.js dir arm64",
+    "build:mac:dir:x64": "node build/mac-build.js dir x64",
+    "build:mac:dir:universal": "node build/mac-build.js dir universal"
   },
   "build": {
     "appId": "com.mineradio.desktop",
@@ -43,6 +50,53 @@
           "arch": [
             "x64"
           ]
+        }
+      ]
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.music",
+      "minimumSystemVersion": "26.0",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "notarize": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "darkModeSupport": true,
+      "artifactName": "Mineradio-${version}-mac-${arch}.${ext}",
+      "extendInfo": {
+        "NSCameraUsageDescription": "Mineradio 仅在你主动启用手势触碰时访问摄像头，用于识别手势并控制粒子视觉。",
+        "NSHighResolutionCapable": true
+      },
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "Mineradio ${version}",
+      "backgroundColor": "#111217",
+      "iconSize": 112,
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 145,
+          "y": 190,
+          "type": "file"
+        },
+        {
+          "x": 395,
+          "y": 190,
+          "type": "link",
+          "path": "/Applications"
         }
       ]
     },
