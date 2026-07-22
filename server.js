@@ -192,6 +192,12 @@ function saveQQCookie(c) {
   writeSecret('qq-cookie', qqCookie, QQ_COOKIE_FILE);
 }
 
+let appleMusicToken = readSecret('applemusic-token', '');
+function saveAppleMusicToken(token) {
+  appleMusicToken = String(token || '').trim();
+  writeSecret('applemusic-token', appleMusicToken, '');
+}
+
 // ---------- 工具 ----------
 function serveStatic(res, filePath) {
   const ext = path.extname(filePath);
@@ -2451,6 +2457,7 @@ function audioProxyHeadersFor(audioUrl, range) {
   try {
     const host = new URL(audioUrl).hostname.toLowerCase();
     if (host.includes('qq.com') || host.includes('qpic.cn')) headers.Referer = 'https://y.qq.com/';
+    else if (host.includes('apple.com') || host.includes('mzstatic.com')) headers.Referer = 'https://music.apple.com/';
   } catch (e) {}
   if (range) headers.Range = range;
   return headers;
@@ -2464,6 +2471,7 @@ function audioContentTypeForUrl(audioUrl, upstreamType) {
   if (/\.(m4a|mp4)$/.test(pathname)) return 'audio/mp4';
   if (/\.ogg$/.test(pathname)) return 'audio/ogg';
   if (/\.wav$/.test(pathname)) return 'audio/wav';
+  if (/\.m3u8$/.test(pathname)) return 'application/vnd.apple.mpegurl';
   return upstreamType || 'audio/mpeg';
 }
 
@@ -3345,6 +3353,214 @@ async function getLoginInfo() {
 }
 
 // ====================================================================
+//  Apple Music
+// ====================================================================
+const APPLE_API_BASE = 'https://api.music.apple.com/v1';
+const APPLE_AMP_API_BASE = 'https://amp-api.music.apple.com/v1';
+// Developer token extracted from music.apple.com JS bundle (ES256 JWT, ~6 month expiry)
+let APPLE_DEV_TOKEN = '';
+let APPLE_DEV_TOKEN_EXPIRY = 0;
+let appleStorefront = 'cn';
+
+function appleApiHeaders() {
+  const headers = {
+    'User-Agent': UA,
+    Origin: 'https://music.apple.com',
+    Referer: 'https://music.apple.com/',
+  };
+  if (APPLE_DEV_TOKEN) headers.Authorization = `Bearer ${APPLE_DEV_TOKEN}`;
+  if (appleMusicToken) headers['Media-User-Token'] = appleMusicToken;
+  return headers;
+}
+
+async function refreshAppleDevToken() {
+  try {
+    console.log('[AppleMusic] refreshing developer token...');
+    const html = await requestText('https://music.apple.com/', { headers: { 'User-Agent': UA } });
+    // Find JS bundle references
+    const jsMatches = html.match(/src="(\/assets\/index-[^"]+\.js)"/g) || [];
+    for (const match of jsMatches.slice(0, 5)) {
+      const jsPath = match.replace('src="', '').replace('"', '');
+      try {
+        const js = await requestText(`https://music.apple.com${jsPath}`, { headers: { 'User-Agent': UA } });
+        const tokenMatch = js.match(/eyJh[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+        if (tokenMatch) {
+          APPLE_DEV_TOKEN = tokenMatch[0];
+          // Decode expiry from JWT payload
+          try {
+            const payload = JSON.parse(Buffer.from(APPLE_DEV_TOKEN.split('.')[1], 'base64url').toString());
+            APPLE_DEV_TOKEN_EXPIRY = (payload.exp || 0) * 1000;
+            console.log('[AppleMusic] developer token refreshed, expires:', new Date(APPLE_DEV_TOKEN_EXPIRY).toISOString());
+          } catch (_) {
+            APPLE_DEV_TOKEN_EXPIRY = Date.now() + 180 * 24 * 3600 * 1000;
+          }
+          return true;
+        }
+      } catch (_) {}
+    }
+    console.warn('[AppleMusic] could not extract developer token from JS bundles');
+    return false;
+  } catch (e) {
+    console.warn('[AppleMusic] dev token refresh failed:', e.message);
+    return false;
+  }
+}
+
+async function ensureAppleDevToken() {
+  if (APPLE_DEV_TOKEN && APPLE_DEV_TOKEN_EXPIRY > Date.now() + 3600000) return true;
+  return refreshAppleDevToken();
+}
+
+function normalizeAppleSong(raw) {
+  if (!raw) return null;
+  const attrs = raw.attributes || raw;
+  const id = String(raw.id || '');
+  const name = attrs.name || '';
+  if (!id || !name) return null;
+  const artwork = attrs.artwork || {};
+  const coverUrl = (artwork.url || '').replace('{w}', '300').replace('{h}', '300');
+  return {
+    id,
+    appleId: id,
+    name,
+    artist: attrs.artistName || attrs.composerName || '',
+    album: attrs.albumName || '',
+    duration: Math.round((attrs.durationInMillis || 0) / 1000),
+    cover: coverUrl,
+    provider: 'applemusic',
+    source: 'applemusic',
+    isrc: attrs.isrc || '',
+  };
+}
+
+async function handleAppleMusicSearch(keywords, limit) {
+  const kw = String(keywords || '').trim();
+  if (!kw) return [];
+  console.log('[AppleMusicSearch]', kw, 'limit:', limit);
+  await ensureAppleDevToken();
+  const u = new URL(`${APPLE_API_BASE}/catalog/${appleStorefront}/search`);
+  u.searchParams.set('term', kw);
+  u.searchParams.set('types', 'songs');
+  u.searchParams.set('limit', String(limit));
+  try {
+    const json = await requestJson(u.toString(), { headers: appleApiHeaders() });
+    const songs = ((json && json.results && json.results.songs && json.results.songs.data) || [])
+      .map(normalizeAppleSong).filter(Boolean);
+    return songs;
+  } catch (e) {
+    console.warn('[AppleMusicSearch] failed:', e.message);
+    if (e.statusCode === 401) {
+      APPLE_DEV_TOKEN = '';
+      APPLE_DEV_TOKEN_EXPIRY = 0;
+    }
+    return [];
+  }
+}
+
+async function handleAppleMusicSongUrl(id) {
+  const songId = String(id || '').trim();
+  if (!songId) return { provider: 'applemusic', url: '', playable: false, error: 'MISSING_ID' };
+  if (!appleMusicToken) {
+    return {
+      provider: 'applemusic', url: '', playable: false,
+      restriction: playbackRestriction('applemusic', 'login_required', 'Apple Music 需要登录后才能播放完整歌曲', 'login'),
+    };
+  }
+  console.log('[AppleMusicSongUrl] id:', songId);
+  await ensureAppleDevToken();
+  // Try the playback endpoint for full stream
+  const u = new URL(`${APPLE_AMP_API_BASE}/me/songs/${songId}/playback`);
+  try {
+    const json = await requestJson(u.toString(), { headers: appleApiHeaders() });
+    const assets = (json && json.assets) || [];
+    // Prefer highest quality flavor
+    const asset = assets.find(a => a.flavor === '256') || assets.find(a => a.flavor === '64') || assets[0];
+    if (asset && (asset.url || asset.URI)) {
+      const streamUrl = asset.url || asset.URI;
+      return { provider: 'applemusic', url: streamUrl, playable: true, quality: asset.flavor === '256' ? '256kbps AAC' : '64kbps AAC', hls: !!asset.hlsUrl };
+    }
+    // Fallback: check for HLS manifest
+    if (json && json.hlsUrl) {
+      return { provider: 'applemusic', url: json.hlsUrl, playable: true, quality: 'HLS', hls: true };
+    }
+    return {
+      provider: 'applemusic', url: '', playable: false,
+      restriction: playbackRestriction('applemusic', 'url_unavailable', 'Apple Music 未返回播放地址', 'switch_source'),
+    };
+  } catch (e) {
+    console.warn('[AppleMusicSongUrl] playback failed:', e.message);
+    if (e.statusCode === 401) {
+      return {
+        provider: 'applemusic', url: '', playable: false,
+        restriction: playbackRestriction('applemusic', 'login_required', 'Apple Music 登录已过期，请重新登录', 'login'),
+      };
+    }
+    if (e.statusCode === 403) {
+      return {
+        provider: 'applemusic', url: '', playable: false,
+        restriction: playbackRestriction('applemusic', 'vip_required', 'Apple Music 需要有效订阅才能播放', 'upgrade'),
+      };
+    }
+    // Fallback to preview URL from catalog
+    try {
+      const catalogUrl = new URL(`${APPLE_API_BASE}/catalog/${appleStorefront}/songs/${songId}`);
+      const catalog = await requestJson(catalogUrl.toString(), { headers: appleApiHeaders() });
+      const songData = catalog && catalog.data && catalog.data[0];
+      const preview = songData && songData.attributes && songData.attributes.previews && songData.attributes.previews[0];
+      if (preview && preview.url) {
+        return { provider: 'applemusic', url: preview.url, playable: true, trial: true, quality: 'preview' };
+      }
+    } catch (_) {}
+    return { provider: 'applemusic', url: '', playable: false, error: e.message };
+  }
+}
+
+async function handleAppleMusicLyrics(id) {
+  const songId = String(id || '').trim();
+  if (!songId) return { provider: 'applemusic', lyric: '' };
+  await ensureAppleDevToken();
+  const u = new URL(`${APPLE_API_BASE}/catalog/${appleStorefront}/songs/${songId}`);
+  u.searchParams.set('extend', 'lyrics');
+  try {
+    const json = await requestJson(u.toString(), { headers: appleApiHeaders() });
+    const songData = json && json.data && json.data[0];
+    const editorial = songData && songData.editorialNotes;
+    // Apple lyrics may come in different formats
+    if (editorial && editorial.lyrics) {
+      return { provider: 'applemusic', lyric: editorial.lyrics, synced: false };
+    }
+    // Try the dedicated lyrics endpoint if available
+    const lyricsUrl = new URL(`${APPLE_AMP_API_BASE}/catalog/${appleStorefront}/songs/${songId}/lyrics`);
+    try {
+      const lyricsJson = await requestJson(lyricsUrl.toString(), { headers: appleApiHeaders() });
+      const ttml = (lyricsJson && lyricsJson.ttml) || '';
+      if (ttml) return { provider: 'applemusic', lyric: ttml, synced: true, format: 'ttml' };
+    } catch (_) {}
+    return { provider: 'applemusic', lyric: '' };
+  } catch (e) {
+    console.warn('[AppleMusicLyrics] failed:', e.message);
+    return { provider: 'applemusic', lyric: '' };
+  }
+}
+
+async function handleAppleMusicStatus() {
+  if (!appleMusicToken) return { provider: 'applemusic', loggedIn: false };
+  await ensureAppleDevToken();
+  const u = new URL(`${APPLE_API_BASE}/me/storefront`);
+  try {
+    const json = await requestJson(u.toString(), { headers: appleApiHeaders() });
+    const sf = json && json.data && json.data[0] && json.data[0].id;
+    if (sf) appleStorefront = sf;
+    return { provider: 'applemusic', loggedIn: true, storefront: appleStorefront };
+  } catch (e) {
+    if (e.statusCode === 401) {
+      return { provider: 'applemusic', loggedIn: false, expired: true };
+    }
+    return { provider: 'applemusic', loggedIn: !!appleMusicToken, error: e.message };
+  }
+}
+
+// ====================================================================
 //  HTTP Server
 // ====================================================================
 const server = http.createServer(async (req, res) => {
@@ -3663,6 +3879,84 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       console.error('[QQSongComments]', err);
       sendJSON(res, { provider: 'qq', error: err.message, comments: [] }, 500);
+    }
+    return;
+  }
+
+  // ---------- Apple Music ----------
+  if (pn === '/api/applemusic/search') {
+    try {
+      const kw = url.searchParams.get('term') || url.searchParams.get('keywords') || '';
+      const limit = Math.max(4, Math.min(30, parseInt(url.searchParams.get('limit') || '12', 10) || 12));
+      const songs = await handleAppleMusicSearch(kw, limit);
+      sendJSON(res, { provider: 'applemusic', songs });
+    } catch (err) {
+      console.error('[AppleMusicSearch]', err);
+      sendJSON(res, { provider: 'applemusic', error: err.message, songs: [] }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/applemusic/song/url') {
+    try {
+      const id = url.searchParams.get('id') || url.searchParams.get('appleId') || '';
+      const info = await handleAppleMusicSongUrl(id);
+      sendJSON(res, info);
+    } catch (err) {
+      console.error('[AppleMusicSongUrl]', err);
+      sendJSON(res, { provider: 'applemusic', url: '', playable: false, error: err.message }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/applemusic/lyric') {
+    try {
+      const id = url.searchParams.get('id') || url.searchParams.get('appleId') || '';
+      const data = await handleAppleMusicLyrics(id);
+      sendJSON(res, data);
+    } catch (err) {
+      console.error('[AppleMusicLyrics]', err);
+      sendJSON(res, { provider: 'applemusic', error: err.message, lyric: '' }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/applemusic/login/status') {
+    try {
+      const data = await handleAppleMusicStatus();
+      sendJSON(res, data);
+    } catch (err) {
+      sendJSON(res, { provider: 'applemusic', loggedIn: false, error: err.message });
+    }
+    return;
+  }
+
+  if (pn === '/api/applemusic/login/token') {
+    try {
+      const body = await readRequestBody(req);
+      const token = (body && (body.token || body['media-user-token'])) || '';
+      if (!token) { sendJSON(res, { ok: false, error: 'EMPTY_TOKEN' }, 400); return; }
+      saveAppleMusicToken(token);
+      const status = await handleAppleMusicStatus();
+      sendJSON(res, Object.assign({ ok: !!status.loggedIn }, status));
+    } catch (err) {
+      sendJSON(res, { ok: false, loggedIn: false, error: err.message }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/applemusic/logout') {
+    saveAppleMusicToken('');
+    sendJSON(res, { ok: true });
+    return;
+  }
+
+  if (pn === '/api/applemusic/refresh-dev-token') {
+    try {
+      const ok = await refreshAppleDevToken();
+      sendJSON(res, { ok, hasToken: !!APPLE_DEV_TOKEN });
+    } catch (err) {
+      sendJSON(res, { ok: false, error: err.message }, 500);
     }
     return;
   }

@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('desktopWindow', {
   clearNeteaseMusicLogin: () => ipcRenderer.invoke('netease-music-clear-login'),
   openQQMusicLogin: () => ipcRenderer.invoke('qq-music-open-login'),
   clearQQMusicLogin: () => ipcRenderer.invoke('qq-music-clear-login'),
+  openAppleMusicLogin: () => ipcRenderer.invoke('applemusic-open-login'),
+  clearAppleMusicLogin: () => ipcRenderer.invoke('applemusic-clear-login'),
   openUpdateInstaller: (filePath) => ipcRenderer.invoke('mineradio-open-update-installer', filePath),
   showUpdateInFolder: (filePath) => ipcRenderer.invoke('mineradio-show-update-in-folder', filePath),
   showNotification: (payload) => ipcRenderer.invoke('mineradio-show-notification', payload || {}),

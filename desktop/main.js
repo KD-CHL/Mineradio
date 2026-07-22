@@ -58,6 +58,8 @@ const NETEASE_LOGIN_PARTITION = 'persist:mineradio-netease-login';
 const NETEASE_LOGIN_URL = 'https://music.163.com/#/login';
 const QQ_LOGIN_PARTITION = 'persist:mineradio-qqmusic-login';
 const QQ_LOGIN_URL = 'https://y.qq.com/n/ryqq/profile';
+const APPLE_LOGIN_PARTITION = 'persist:mineradio-applemusic-login';
+const APPLE_LOGIN_URL = 'https://music.apple.com/';
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -94,6 +96,32 @@ const NETEASE_LOGIN_COOKIE_PRIORITY = [
   'WNMCID',
   'JSESSIONID-WYYY',
 ];
+const APPLE_LOGIN_COOKIE_PRIORITY = [
+  'media-user-token',
+  'itua',
+  'ituo',
+  'acn',
+  'acs',
+  'dssf',
+  'itvt',
+  'itcd',
+];
+
+function isAppleCookieDomain(domain) {
+  const normalized = String(domain || '').replace(/^\./, '').toLowerCase();
+  return normalized === 'apple.com' || normalized.endsWith('.apple.com') ||
+    normalized === 'music.apple.com' || normalized.endsWith('.music.apple.com');
+}
+
+function appleCookieHasLogin(cookieText) {
+  const obj = parseCookieHeader(cookieText);
+  return !!(obj['media-user-token'] || obj.itua || obj.acn);
+}
+
+async function readAppleLoginCookieHeader(cookieSession) {
+  const cookies = await cookieSession.cookies.get({});
+  return buildCookieHeaderFor(cookies, isAppleCookieDomain, APPLE_LOGIN_COOKIE_PRIORITY);
+}
 
 function findOpenPort(startPort) {
   return new Promise((resolve, reject) => {
@@ -683,6 +711,105 @@ async function clearNeteaseMusicLoginSession() {
   return { ok: true };
 }
 
+async function openAppleMusicLoginWindow(owner) {
+  const cookieSession = session.fromPartition(APPLE_LOGIN_PARTITION);
+  const initialCookie = await readAppleLoginCookieHeader(cookieSession);
+  if (appleCookieHasLogin(initialCookie)) return { ok: true, cookie: initialCookie, reused: true };
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let pollTimer = null;
+
+    const loginWindow = new BrowserWindow({
+      width: 520,
+      height: 680,
+      minWidth: 420,
+      minHeight: 560,
+      parent: owner && !owner.isDestroyed() ? owner : undefined,
+      modal: false,
+      show: false,
+      ...platformAdapter.loginWindowChromeOptions(),
+      title: 'Apple Music 登录',
+      backgroundColor: '#111111',
+      icon: APP_ICON,
+      webPreferences: {
+        partition: APPLE_LOGIN_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+
+    const finish = async (result) => {
+      if (settled) return;
+      settled = true;
+      if (pollTimer) clearInterval(pollTimer);
+      if (loginWindow && !loginWindow.isDestroyed()) loginWindow.close();
+      resolve(result);
+    };
+
+    const checkLogin = async () => {
+      try {
+        // Apple stores media-user-token in localStorage, not cookies
+        let token = '';
+        try {
+          token = await loginWindow.webContents.executeJavaScript(
+            `localStorage.getItem('media-user-token') || ''`, true
+          );
+        } catch (_) {}
+        if (token) {
+          finish({ ok: true, cookie: `media-user-token=${token}`, token });
+          return;
+        }
+        // Fallback: check cookies for Apple session indicators
+        const cookie = await readAppleLoginCookieHeader(cookieSession);
+        if (appleCookieHasLogin(cookie)) {
+          finish({ ok: true, cookie });
+        }
+      } catch (e) {
+        console.warn('Apple Music login check failed:', e.message);
+      }
+    };
+
+    loginWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\//i.test(url)) {
+        loginWindow.loadURL(url).catch((e) => console.warn('Apple login popup navigation failed:', e.message));
+      } else {
+        openExternalUrl(url).catch(() => {});
+      }
+      return { action: 'deny' };
+    });
+
+    loginWindow.webContents.on('did-finish-load', () => checkLogin());
+    loginWindow.webContents.on('did-navigate', () => checkLogin());
+
+    loginWindow.on('ready-to-show', () => loginWindow.show());
+    loginWindow.on('closed', async () => {
+      if (settled) return;
+      if (pollTimer) clearInterval(pollTimer);
+      try {
+        const cookie = await readAppleLoginCookieHeader(cookieSession);
+        resolve(appleCookieHasLogin(cookie)
+          ? { ok: true, cookie }
+          : { ok: false, cancelled: true, message: 'Apple Music 登录窗口已关闭' });
+      } catch (e) {
+        resolve({ ok: false, error: e.message || 'Apple Music 登录窗口已关闭' });
+      }
+    });
+
+    pollTimer = setInterval(checkLogin, 2000);
+    loginWindow.loadURL(APPLE_LOGIN_URL).catch((e) => finish({ ok: false, error: e.message }));
+  });
+}
+
+async function clearAppleMusicLoginSession() {
+  const cookieSession = session.fromPartition(APPLE_LOGIN_PARTITION);
+  await cookieSession.clearStorageData({
+    storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'],
+  });
+  return { ok: true };
+}
+
 function getWindowedBounds(win) {
   const display = win && !win.isDestroyed()
     ? screen.getDisplayMatching(win.getBounds())
@@ -1244,6 +1371,14 @@ ipcMain.handle('qq-music-open-login', async (event) => {
 
 ipcMain.handle('qq-music-clear-login', async () => {
   return clearQQMusicLoginSession();
+});
+
+ipcMain.handle('applemusic-open-login', async (event) => {
+  return openAppleMusicLoginWindow(getSenderWindow(event));
+});
+
+ipcMain.handle('applemusic-clear-login', async () => {
+  return clearAppleMusicLoginSession();
 });
 
 ipcMain.handle('mineradio-open-update-installer', async (_event, filePath) => {
